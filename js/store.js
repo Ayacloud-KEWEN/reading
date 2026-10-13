@@ -18,7 +18,7 @@ const REST_PER_WEEK = 2;
 const MOODS = ['震撼', '上头', '感动', '心痛', '好笑', '平静', '困惑', '无聊'];
 const MOOD_VALUE = { 震撼: 3, 上头: 3, 感动: 2, 心痛: 2, 好笑: 1, 平静: 0, 困惑: -1, 无聊: -2 };
 const CARD_KINDS = {
-  person: '人物', place: '地点', term: '名词', event: '事件',
+  person: '人物', place: '地点', term: '名词', knowledge: '知识', event: '事件',
   quote: '摘抄', photo: '书页', guess: '猜测', note: '随笔'
 };
 
@@ -220,6 +220,6 @@ function yearStats(year) {
     pages: Math.round(pages), secs, episodes, days,
     sessions: ss.length, months, peakHour: peak,
     persons: count('person'), places: count('place'), terms: count('term'),
-    quotes: count('quote') + count('photo'), events: count('event'), guesses: count('guess')
+    quotes: count('quote') + count('photo'), knowledge: count('knowledge'), events: count('event'), guesses: count('guess')
   };
 }

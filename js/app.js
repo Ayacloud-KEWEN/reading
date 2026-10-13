@@ -5,7 +5,6 @@ const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const app = $('#app');
 const h = esc;
-let tickTimer = null;
 
 // ---------- 通用组件 ----------
 function toast(msg, ms = 1800) {
@@ -96,17 +95,16 @@ const routes = [
   [/^\/new$/, () => viewWorkForm(null)],
   [/^\/edit\/(\w+)$/, viewWorkForm],
   [/^\/work\/(\w+)(?:\/(\w+))?$/, viewWork],
-  [/^\/session\/(\w+)$/, viewSession],
-  [/^\/log\/(\w+)$/, viewManualLog],
+  [/^\/recap\/(\w+)$/, viewRecap],
+  [/^\/log\/(\w+)$/, viewLog],
   [/^\/finish\/(\w+)$/, viewFinish],
   [/^\/memorial\/(\w+)$/, viewMemorial],
   [/^\/stats(?:\/(\d+))?$/, viewStats],
   [/^\/settings$/, viewSettings]
 ];
-const NAV_OF = { '': 'home', session: 'home', shelf: 'shelf', new: 'shelf', edit: 'shelf', work: 'shelf', log: 'shelf', finish: 'shelf', memorial: 'shelf', stats: 'stats', settings: 'settings' };
+const NAV_OF = { '': 'home', recap: 'shelf', shelf: 'shelf', new: 'shelf', edit: 'shelf', work: 'shelf', log: 'shelf', finish: 'shelf', memorial: 'shelf', stats: 'stats', settings: 'settings' };
 
 function render() {
-  clearInterval(tickTimer);
   closeModal();
   const path = location.hash.replace(/^#/, '') || '/';
   const seg = path.split('/')[1] || '';
@@ -139,17 +137,15 @@ function viewHome() {
   const reading = S.works.filter(w => w.status === 'reading')
     .sort((a, b) => (lastReadAt(b) || b.createdAt) - (lastReadAt(a) || a.createdAt));
   const needBackup = S.sessions.length > 0 && Date.now() - (S.settings.lastBackup || 0) > 7 * DAY;
-  const active = S.active && getWork(S.active.workId);
 
   app.innerHTML = `
     <div class="row between"><h1>远征手账</h1><span class="muted">${now.getMonth() + 1}月${now.getDate()}日</span></div>
     <div class="muted">${info.n ? `连续远征 ${info.n} 天` : '今天开始第一天'} · 本周剩余休息 ${info.restLeft} 天${info.readToday ? ' · 今日已盖章' : ''}</div>
     <div class="stamp-strip">${strip}</div>
-    ${active ? `<div class="banner" data-go="/session/${active.id}">正在${workUnitVerb(active)}《${h(active.title)}》，点此回到计时 →</div>` : ''}
     ${needBackup ? `<div class="banner" data-go="/settings">已经一周多没有备份了，点此导出备份，防止数据丢失 →</div>` : ''}
     <h2>进行中的远征</h2>
     ${reading.length ? reading.map(workCardHTML).join('') : `<div class="empty">还没有进行中的作品<br><br><button class="btn-seal" data-go="/new">添加一部书或影视</button></div>`}
-    ${reading.length ? `<button class="btn-main" data-go="/session/${(active || reading[0]).id}">继续远征 · ${h((active || reading[0]).title)}</button>` : ''}
+    ${reading.length ? `<button class="btn-main" data-go="/log/${reading[0].id}">记一笔 · ${h(reading[0].title)}</button>` : ''}
   `;
 
 }
@@ -165,6 +161,8 @@ function workCardHTML(w) {
   </div>`;
 }
 
+// 外部链接不触发卡片的点击编辑
+document.addEventListener('click', e => { if (e.target.closest('a.ext')) e.stopPropagation(); }, true);
 // data-go 导航：全局委托，只绑定一次
 document.addEventListener('click', e => {
   const t = e.target.closest('[data-go]');
@@ -286,7 +284,6 @@ function viewWorkForm(id) {
     S.works = S.works.filter(x => x !== w);
     S.sessions = S.sessions.filter(s => s.workId !== w.id);
     S.cards = S.cards.filter(c => c.workId !== w.id);
-    if (S.active && S.active.workId === w.id) S.active = null;
     save();
     go('/shelf');
   });
@@ -296,7 +293,7 @@ function viewWorkForm(id) {
 function viewWork(id, tab = 'route') {
   const w = getWork(id);
   if (!w) return go('/shelf');
-  const tabs = [['route', '路线'], ['world', '世界'], ['timeline', '时间轴'], ['cards', '卡片'], ['log', '日志']];
+  const tabs = [['route', '路线'], ['world', '世界'], ['timeline', '时间轴'], ['cards', '卡片'], ['info', '资料'], ['log', '日志']];
   const e = eta(w);
   const done = w.status === 'done';
   app.innerHTML = `
@@ -309,10 +306,13 @@ function viewWork(id, tab = 'route') {
       ${progressBar(workPct(w))}
       ${e ? `<div class="muted small" style="margin-top:4px">预计 ${fmtDate(e)} 抵达</div>` : ''}
       <div class="row" style="margin-top:10px">
-        ${done ? `<button class="btn-main" data-go="/memorial/${w.id}">打开纪念册</button>` : `<button class="btn-main" data-go="/session/${w.id}">开始${workUnitVerb(w)}</button>`}
+        ${done ? `<button class="btn-main" data-go="/memorial/${w.id}">打开纪念册</button>` : `<button class="btn-main" data-go="/log/${w.id}">记录进度</button>`}
+      </div>
+      <div class="grid2" style="margin-top:8px">
+        <button id="qn">随手记</button><button data-go="/recap/${w.id}">读前回顾</button>
       </div>
       <div class="row between" style="margin-top:6px">
-        <button class="btn-ghost btn-sm" data-go="/log/${w.id}">补记一次</button>
+        ${done ? `<button class="btn-ghost btn-sm" data-go="/log/${w.id}">再记一笔</button>` : ''}
         ${done ? '' : `<button class="btn-ghost btn-sm" data-go="/memorial/${w.id}">预览纪念册</button>`}
         ${!done && workPct(w) >= 100 ? `<button class="btn-seal btn-sm" data-go="/finish/${w.id}">完成远征</button>` : ''}
       </div>
@@ -320,8 +320,9 @@ function viewWork(id, tab = 'route') {
     <div class="tabs">${tabs.map(([k, n]) => `<a href="#/work/${w.id}/${k}" class="${k === tab ? 'on' : ''}">${n}</a>`).join('')}</div>
     <div id="tab"></div>`;
 
+  $('#qn').onclick = () => pickKind(w, () => viewWork(id, tab));
   const el = $('#tab');
-  ({ route: tabRoute, world: tabWorld, timeline: tabTimeline, cards: tabCards, log: tabLog }[tab] || tabRoute)(w, el);
+  ({ route: tabRoute, world: tabWorld, timeline: tabTimeline, cards: tabCards, info: tabInfo, log: tabLog }[tab] || tabRoute)(w, el);
 }
 
 function tabRoute(w, el) {
@@ -497,8 +498,116 @@ function cardHTML(c) {
   const extra = [c.faction && `阵营：${h(c.faction)}`, c.when && `书中时间：${h(c.when)}`].filter(Boolean).join(' · ');
   return `<div class="card tap" data-card="${c.id}">
     <div class="row">${kind}<b class="grow">${h(c.title || (c.kind === 'quote' ? '摘抄' : c.kind === 'photo' ? '书页' : ''))}</b>${verdict}</div>
-    ${extra ? `<div class="muted small">${extra}</div>` : ''}${body}
+    ${extra ? `<div class="muted small">${extra}</div>` : ''}${body}${c.url ? `<div>${linkHTML(c.url)}</div>` : ''}${addSummary(c)}
     <div class="anchor">${h(c.anchor || '')}</div></div>`;
+}
+
+// ----- 资料 -----
+const INFO_PRESETS = ['作者背景', '创作背景', '世界观设定', '科学知识', '历史与现实原型', '延伸阅读', '影视改编'];
+const safeUrl = u => (/^https?:\/\//i.test(u) ? u : 'https://' + u);
+const shortUrl = u => u.replace(/^https?:\/\//i, '').slice(0, 40);
+const linkHTML = (url, title) => `<a class="ext small" href="${h(safeUrl(url))}" target="_blank" rel="noopener">${h(title || shortUrl(url))} ↗</a>`;
+const linksHTML = links => ((links || []).length ? `<div style="margin-top:4px">${links.map(l => `<div>${linkHTML(l.url, l.title)}</div>`).join('')}</div>` : '');
+
+// 一行一个链接，网址前面的文字作为标题
+function parseLinks(text) {
+  return text.split('\n').map(s => s.trim()).filter(Boolean).map(line => {
+    const m = line.match(/(https?:\/\/\S+|www\.\S+)/i);
+    return m ? { title: line.replace(m[0], '').trim(), url: m[0] } : null;
+  }).filter(Boolean);
+}
+
+function tabInfo(w, el) {
+  const list = w.info || [];
+  el.innerHTML = `
+    <div class="muted small">关于这部作品的背景知识：作者、创作背景、世界观、书里涉及的科学和历史。随时整理补充。</div>
+    <div id="infoList">${list.length ? list.map(x => `<div class="card tap" data-info="${x.id}">
+      <h3>${h(x.title)}</h3>${x.body ? `<div class="small" style="white-space:pre-wrap;margin-top:4px">${h(x.body)}</div>` : ''}
+      ${x.photo ? `<img class="photo" src="${x.photo}" alt="">` : ''}${linksHTML(x.links)}
+      <div class="anchor">更新于 ${fmtDate(x.updatedAt || x.createdAt)}</div></div>`).join('')
+      : `<div class="empty">还没有资料。可以从作者背景、世界观设定开始。</div>`}</div>
+    <button class="btn-sm" id="add">+ 添加资料</button>`;
+  const re = () => tabInfo(w, el);
+  $('#add', el).onclick = () => openInfoForm(w, null, re);
+  $('#infoList', el).addEventListener('click', e => {
+    const c = e.target.closest('[data-info]');
+    if (c) openInfoForm(w, w.info.find(x => x.id === c.dataset.info), re);
+  });
+}
+
+function openInfoForm(w, sec, after) {
+  const m = openModal(`<h3>${sec ? '编辑' : '添加'}资料</h3>
+    <label>主题</label><div class="chips" id="ip">${INFO_PRESETS.map(t => `<span class="chip" data-v="${t}">${t}</span>`).join('')}</div>
+    <input id="it" style="margin-top:6px" value="${h(sec ? sec.title : '')}" placeholder="或者自己写一个主题">
+    <label>内容</label><textarea id="ib" style="min-height:140px">${h(sec ? sec.body : '')}</textarea>
+    <label>链接（一行一个，网址前可以写标题）</label>
+    <textarea id="il" style="min-height:60px" placeholder="维基百科 https://zh.wikipedia.org/...">${h(sec ? (sec.links || []).map(l => (l.title ? l.title + ' ' : '') + l.url).join('\n') : '')}</textarea>
+    <label>图片（可选）</label><input id="iph" type="file" accept="image/*">
+    ${sec && sec.photo ? `<img class="photo" src="${sec.photo}" alt=""><div class="row"><input type="checkbox" id="irm" style="width:auto"> 移除图片</div>` : ''}
+    <div class="row" style="margin-top:18px">${sec ? '<button id="idel" class="btn-ghost">删除</button>' : ''}<button class="btn-main grow" id="iok">保存</button></div>`);
+  bindChips($('#ip', m), v => { if (v) $('#it', m).value = v; });
+  $('#iok', m).onclick = async () => {
+    const title = $('#it', m).value.trim();
+    if (!title) return toast('写个主题');
+    let photo = sec ? sec.photo : null;
+    if ($('#irm', m) && $('#irm', m).checked) photo = null;
+    const f = $('#iph', m).files[0];
+    if (f) { try { photo = await compressImage(f); } catch { return toast('图片读取失败'); } }
+    const data = { title, body: $('#ib', m).value.trim(), links: parseLinks($('#il', m).value), photo, updatedAt: Date.now() };
+    if (sec) Object.assign(sec, data);
+    else (w.info = w.info || []).push({ id: uid(), createdAt: Date.now(), ...data });
+    save(); closeModal(); after && after();
+  };
+  if (sec) $('#idel', m).onclick = () => {
+    if (!confirm('删除这条资料？')) return;
+    w.info = w.info.filter(x => x !== sec);
+    save(); closeModal(); after && after();
+  };
+}
+
+// ----- 卡片补充：随阅读不断加深的认识 -----
+function addSummary(c) {
+  const a = c.addenda || [];
+  if (!a.length) return '';
+  return `<div class="small" style="margin-top:4px;color:var(--sub)">补充 ${a.length} 条 · 最新：${h(a[a.length - 1].body.slice(0, 40))}</div>`;
+}
+const addendaList = c => (c.addenda || []).map(a => `<div class="small" style="margin-top:2px">→ <span class="anchor">${h(a.anchor || '')}</span> ${h(a.body)}${a.url ? ' ' + linkHTML(a.url) : ''}</div>`).join('');
+
+function addendaItems(card) {
+  const a = card.addenda || [];
+  return a.length ? a.map(x => `<div class="card" style="margin:6px 0;padding:8px 10px">
+      <div class="small" style="white-space:pre-wrap">${h(x.body)}</div>${x.url ? linkHTML(x.url) : ''}
+      <div class="row between"><span class="anchor">${h(x.anchor || '')} · ${fmtDate(x.createdAt)}</span>
+      <button class="btn-ghost btn-sm" data-deladd="${x.id}" aria-label="删除补充">×</button></div></div>`).join('')
+    : '<div class="muted small">还没有补充。读到后面对它有了新认识，就在这里追加一条。</div>';
+}
+function addendaHTML(card) {
+  return `<label>补充（随阅读追加，记录认识的变化）</label><div id="adds">${addendaItems(card)}</div>
+    <textarea id="addBody" placeholder="新的认识、后来的变化……" style="min-height:56px"></textarea>
+    <div class="row" style="margin-top:6px"><input id="addUrl" class="grow" placeholder="相关链接（可选）"><button id="addOk" class="btn-sm">追加</button></div>`;
+}
+function bindAddenda(m, w, card) {
+  $('#addOk', m).onclick = () => {
+    const body = $('#addBody', m).value.trim();
+    if (!body) return toast('写点什么再追加');
+    const p = w.progress || {};
+    const ed = editionOf(w, p.editionId);
+    const v = p.editionId === ed.id ? p.value || 0 : pctToValue(ed, workPct(w));
+    const anc = anchorFor(w, ed.id, v, p.chapterIdx);
+    (card.addenda = card.addenda || []).push({ id: uid(), body, url: $('#addUrl', m).value.trim(), pct: anc.pct, anchor: anc.label, createdAt: Date.now() });
+    save();
+    $('#addBody', m).value = '';
+    $('#addUrl', m).value = '';
+    $('#adds', m).innerHTML = addendaItems(card);
+    toast('已追加');
+  };
+  $('#adds', m).addEventListener('click', e => {
+    const b = e.target.closest('[data-deladd]');
+    if (!b || !confirm('删除这条补充？')) return;
+    card.addenda = card.addenda.filter(x => x.id !== b.dataset.deladd);
+    save();
+    $('#adds', m).innerHTML = addendaItems(card);
+  });
 }
 
 // ----- 日志 -----
@@ -532,7 +641,7 @@ function sessionHTML(w, s) {
   return `<div class="card">
     <div class="row between"><b style="font-family:var(--serif)">${fmtDate(s.end)}</b>
       <span class="row">${s.mood ? `<span class="stamp">${s.mood}</span>` : ''}<button class="btn-ghost btn-sm" data-delsession="${s.id}" aria-label="删除">×</button></span></div>
-    <div class="muted small">${EDITION_LABEL[ed.kind]} · ${valueLabel(ed, s.fromValue)} → ${valueLabel(ed, s.toValue)} · ${fmtDur(s.duration || 0)}${s.manual ? ' · 补记' : ''}</div>
+    <div class="muted small">${EDITION_LABEL[ed.kind]} · ${valueLabel(ed, s.fromValue)} → ${valueLabel(ed, s.toValue)}${s.duration ? ' · ' + fmtDur(s.duration) : ''}</div>
     ${s.giveUp ? `<div class="small" style="color:var(--seal)">差点放弃${s.giveUpWhy ? '：' + h(s.giveUpWhy) : ''}</div>` : ''}
   </div>`;
 }
@@ -545,6 +654,7 @@ function pickKind(w, after) {
 }
 
 const CARD_FIELDS = {
+  knowledge: { title: '知识点', body: '说明', ph: '书里提到的真实知识：一首诗、一个物理概念、一段历史……' },
   person: { title: '名字', body: '一句话印象', ph: '性格、身份、和谁有关……' },
   place: { title: '地名', body: '描述', ph: '这是个什么地方' },
   term: { title: '名词', body: '解释', ph: '书里是怎么说的' },
@@ -572,6 +682,8 @@ function openCardForm(w, kind, { card = null, anchor = null, after = null } = {}
     ${kind === 'quote' ? `<label>我的批注（可选）</label><input id="cn" value="${h(card ? card.note || '' : '')}">` : ''}
     ${kind === 'person' ? `<label>阵营 / 身份（可选）</label><input id="cf" value="${h(card ? card.faction || '' : '')}">` : ''}
     ${kind === 'event' ? `<label>书中时间（可选）</label><input id="cw" value="${h(card ? card.when || '' : '')}" placeholder="2061 年">` : ''}
+    ${kind === 'knowledge' ? `<label>参考链接（可选）</label><input id="cu" value="${h(card ? card.url || '' : '')}" placeholder="https://">` : ''}
+    ${card ? addendaHTML(card) : ''}
     ${kind === 'guess' && card ? `<label>揭晓了吗？</label><div class="chips" id="cr" data-allow-none="1">
       ${[['right', '猜对'], ['partial', '半对'], ['wrong', '猜错']].map(([k, n]) => `<span class="chip ${card.result === k ? 'on' : ''}" data-v="${k}">${n}</span>`).join('')}</div>` : ''}
     <label>位置（${EDITION_LABEL[ed.kind]}）</label>
@@ -584,6 +696,7 @@ function openCardForm(w, kind, { card = null, anchor = null, after = null } = {}
       <button class="btn-main grow" id="cok">保存</button>
     </div>`);
   if ($('#cr', m)) bindChips($('#cr', m));
+  if (card) bindAddenda(m, w, card);
   setTimeout(() => { const f = $('#ct', m) || $('#cb', m); if (f && !card) f.focus(); }, 50);
   $('#cok', m).onclick = async () => {
     const title = $('#ct', m) ? $('#ct', m).value.trim() : '';
@@ -602,6 +715,7 @@ function openCardForm(w, kind, { card = null, anchor = null, after = null } = {}
       note: $('#cn', m) ? $('#cn', m).value.trim() : undefined,
       faction: $('#cf', m) ? $('#cf', m).value.trim() : undefined,
       when: $('#cw', m) ? $('#cw', m).value.trim() : undefined,
+      url: $('#cu', m) ? $('#cu', m).value.trim() : undefined,
       result: $('#cr', m) ? chipVal($('#cr', m)) : (card ? card.result : null),
       editionId: ed.id, value: v, pct: anc.pct, chapterIdx: ci, anchor: anc.label
     };
@@ -619,135 +733,57 @@ function openCardForm(w, kind, { card = null, anchor = null, after = null } = {}
   };
 }
 
-// ---------- 阅读会话 ----------
-function elapsedSec(a) {
-  const end = a.pausedAt || Date.now();
-  return Math.max(0, Math.floor((end - a.start - (a.pausedMs || 0)) / 1000));
-}
-const fmtClock = s => `${s >= 3600 ? Math.floor(s / 3600) + ':' : ''}${pad2(Math.floor(s / 60) % 60)}:${pad2(s % 60)}`;
-
-function viewSession(id) {
+// ---------- 读前回顾（可选，不计时） ----------
+function viewRecap(id) {
   const w = getWork(id);
   if (!w) return go('/');
-  if (S.active && S.active.workId !== id) {
-    const other = getWork(S.active.workId);
-    if (other) {
-      app.innerHTML = `<h1>还有一次${workUnitVerb(other)}没结束</h1>
-        <div class="card">《${h(other.title)}》已经计时 ${fmtDur(elapsedSec(S.active))}。</div>
-        <button class="btn-main" data-go="/session/${other.id}">回到《${h(other.title)}》</button>
-        <div class="center" style="margin-top:12px"><button class="btn-ghost" id="drop">放弃那次计时</button></div>`;
-
-      $('#drop').onclick = () => { if (confirm('放弃那次计时，不记录？')) { S.active = null; save(); render(); } };
-      return;
-    }
-    S.active = null;
-  }
-  if (S.active) return sessionRunning(w);
-  sessionStart(w);
-}
-
-// 开始前：选版本 + 回顾
-function sessionStart(w) {
   const last = lastReadAt(w);
   const gap = last ? Math.floor((Date.now() - last) / DAY) : 0;
-  const recapPool = S.cards.filter(c => c.workId === w.id && ['person', 'place', 'term', 'event'].includes(c.kind));
-  const picks = recapPool.sort(() => Math.random() - 0.5).slice(0, 3);
+  const pool = S.cards.filter(c => c.workId === w.id && ['person', 'place', 'term', 'event', 'knowledge'].includes(c.kind));
+  const picks = pool.sort(() => Math.random() - 0.5).slice(0, 3);
   const recent = [...workCards(w, 'event'), ...workCards(w, 'note')].sort((a, b) => b.createdAt - a.createdAt).slice(0, 3);
-  const lastEd = (w.progress && w.progress.editionId) || w.editions[0].id;
   app.innerHTML = `
     <a href="#/work/${w.id}" class="muted" style="text-decoration:none">← ${h(w.title)}</a>
-    <h1 style="margin-top:6px">出发前</h1>
+    <h1 style="margin-top:6px">读前回顾</h1>
     <div class="muted">${w.progress ? '上次到 ' + progressLabel(w) : '第一次启程'}${last ? ' · ' + daysAgo(last) : ''}</div>
-    ${w.editions.length > 1 ? `<label>这次用哪个版本？</label><div class="chips" id="ed">${w.editions.map(e => `<span class="chip ${e.id === lastEd ? 'on' : ''}" data-v="${e.id}">${EDITION_LABEL[e.kind]}</span>`).join('')}</div>
-      <div class="muted small" id="edHint" style="margin-top:6px"></div>` : ''}
-    ${gap >= 5 && recent.length ? `<h2>前情提要</h2><div class="card"><div class="muted small">你已经 ${gap} 天没${workUnitVerb(w)}了。上次说到：</div>
+    ${recent.length ? `<h2>前情提要</h2><div class="card">${gap >= 2 ? `<div class="muted small">已经 ${gap} 天没${workUnitVerb(w)}了。上次说到：</div>` : ''}
       ${recent.map(c => `<div style="margin-top:6px">· ${h(c.title || c.body)}${c.title && c.body ? `：<span class="muted">${h(c.body.slice(0, 60))}</span>` : ''}</div>`).join('')}</div>` : ''}
     ${picks.length ? `<h2>还记得吗？</h2><div class="muted small">点卡片翻面</div>
       ${picks.map(c => `<div class="flip"><div class="face front"><span class="kind">${CARD_KINDS[c.kind]}</span><b style="font-family:var(--serif);font-size:17px">${h(c.title)}</b><div class="muted small">${h(c.anchor || '')}</div></div>
-        <div class="face back"><b>${h(c.title)}</b>${c.faction ? ` <span class="muted">· ${h(c.faction)}</span>` : ''}<div style="white-space:pre-wrap">${h(c.body || '（没写描述）')}</div></div></div>`).join('')}` : ''}
-    <div style="margin-top:22px"><button class="btn-main" id="go">开始计时</button></div>
-    <div class="center" style="margin-top:10px"><button class="btn-ghost btn-sm" data-go="/log/${w.id}">读完了才想起来？补记一次</button></div>`;
-
+        <div class="face back"><b>${h(c.title)}</b>${c.faction ? ` <span class="muted">· ${h(c.faction)}</span>` : ''}<div style="white-space:pre-wrap">${h(c.body || '（没写描述）')}</div>
+        ${(c.addenda || []).map(a => `<div class="small" style="margin-top:4px">+ ${h(a.body)} <span class="anchor">${h(a.anchor)}</span></div>`).join('')}</div></div>`).join('')}` : ''}
+    ${!recent.length && !picks.length ? `<div class="empty">还没有卡片可以回顾。读的时候想到什么，随时用“随手记”收录。</div>` : ''}
+    <div style="margin-top:22px"><button class="btn-main" data-go="/work/${w.id}">去读吧</button></div>
+    <div class="center" style="margin-top:10px"><button class="btn-ghost btn-sm" data-go="/log/${w.id}">读完了？记录进度</button></div>`;
   $$('.flip').forEach(f => f.addEventListener('click', () => f.classList.toggle('open')));
-  const edEl = $('#ed');
-  const hint = () => {
-    const id = edEl ? chipVal(edEl) : lastEd;
-    const ed = editionOf(w, id);
-    if (edEl && w.progress && w.progress.editionId !== id) {
-      $('#edHint').textContent = `上次在${EDITION_LABEL[editionOf(w, w.progress.editionId).kind]}读到 ${progressLabel(w)}，换到${EDITION_LABEL[ed.kind]}大约是 ${valueLabel(ed, pctToValue(ed, workPct(w)))}`;
-    } else if (edEl) $('#edHint').textContent = '';
-  };
-  if (edEl) { bindChips(edEl, hint); hint(); }
-  $('#go').onclick = () => {
-    const edId = edEl ? chipVal(edEl) || lastEd : lastEd;
-    const ed = editionOf(w, edId);
-    const fromValue = w.progress && w.progress.editionId === ed.id ? w.progress.value : pctToValue(ed, workPct(w));
-    S.active = { workId: w.id, editionId: ed.id, start: Date.now(), pausedMs: 0, pausedAt: null, fromValue, fromPct: workPct(w) };
-    if (w.status === 'want') w.status = 'reading';
-    save();
-    sessionRunning(w);
-  };
 }
 
-function sessionRunning(w) {
-  const a = S.active;
-  const ed = editionOf(w, a.editionId);
-  app.innerHTML = `
-    <a href="#/work/${w.id}" class="muted" style="text-decoration:none">← ${h(w.title)}</a>
-    <h1 style="margin-top:6px">正在${workUnitVerb(w)}</h1>
-    <div class="muted">${EDITION_LABEL[ed.kind]} · 从 ${valueLabel(ed, a.fromValue)} 开始</div>
-    <div class="timer" id="clock">${fmtClock(elapsedSec(a))}</div>
-    <div class="center"><button class="btn-sm" id="pause">${a.pausedAt ? '继续' : '暂停'}</button></div>
-    <h2>随手记</h2>
-    <div class="grid4" id="quick">${Object.entries(CARD_KINDS).map(([k, n]) => `<button class="quick" data-k="${k}">${n === '书页' ? '拍书页' : n}</button>`).join('')}</div>
-    <div class="muted small" id="count" style="margin-top:6px"></div>
-    <div style="margin-top:24px"><button class="btn-main" id="end">结束并盖章</button></div>
-    <div class="center" style="margin-top:10px"><button class="btn-ghost btn-sm" id="cancel">放弃这次计时</button></div>`;
-  const added = () => S.cards.filter(c => c.workId === w.id && c.createdAt >= a.start).length;
-  const showCount = () => { const n = added(); $('#count').textContent = n ? `这次已收录 ${n} 张卡片` : ''; };
-  showCount();
-  tickTimer = setInterval(() => { const c = $('#clock'); if (c) c.textContent = fmtClock(elapsedSec(a)); }, 1000);
-  $('#pause').onclick = () => {
-    if (a.pausedAt) { a.pausedMs += Date.now() - a.pausedAt; a.pausedAt = null; }
-    else a.pausedAt = Date.now();
-    save(); sessionRunning(w);
-  };
-  $('#quick').addEventListener('click', e => {
-    const b = e.target.closest('[data-k]');
-    if (!b) return;
-    openCardForm(w, b.dataset.k, { anchor: { editionId: a.editionId, value: a.fromValue, chapterIdx: w.progress ? w.progress.chapterIdx : null }, after: showCount });
-  });
-  $('#cancel').onclick = () => { if (confirm('放弃这次计时？已收录的卡片会保留。')) { S.active = null; save(); go('/work/' + w.id); } };
-  $('#end').onclick = () => openEndForm(w, {
-    editionId: a.editionId, start: a.start, duration: elapsedSec(a), fromValue: a.fromValue, fromPct: a.fromPct
-  });
-}
-
-// 结束表单（计时结束与补记共用）
-function endFormHTML(w, edId, manual) {
+// 记录进度表单：读完后记一笔，不需要计时
+function endFormHTML(w, edId) {
   const ed = editionOf(w, edId);
   const cur = w.progress && w.progress.editionId === ed.id ? w.progress.value : pctToValue(ed, workPct(w));
   const ch = isScreen(w) ? [] : chapterList(w);
   const ci = w.progress ? w.progress.chapterIdx : null;
   const unit = ed.kind === 'ebook' ? '读到百分之几？' : ed.kind === 'screen' ? '看到第几集？' : '读到第几页？';
   return `
-    ${manual ? `<div class="grid2"><div><label>日期</label><input id="eDate" type="date" value="${dayKey(Date.now())}" max="${dayKey(Date.now())}"></div>
-      <div><label>大约多少分钟</label><input id="eMin" type="number" min="1" value="30"></div></div>` : ''}
     ${w.editions.length > 1 ? `<label>版本</label><div class="chips" id="eEd">${w.editions.map(e => `<span class="chip ${e.id === ed.id ? 'on' : ''}" data-v="${e.id}">${EDITION_LABEL[e.kind]}</span>`).join('')}</div>` : ''}
     <label id="eUnit">${unit}</label>
     <input id="eVal" class="big-num" type="number" inputmode="decimal" step="${ed.kind === 'ebook' ? '0.1' : '1'}" min="0" max="${ed.kind === 'ebook' ? 100 : ed.total}" value="${cur || ''}">
-    <div class="muted small center">共 ${totalLabel(ed)}</div>
+    <div class="muted small center" id="eTotal">共 ${totalLabel(ed)}</div>
     ${ch.length ? `<label>当前章节</label><select id="eCh"><option value="">不选</option>${ch.map((c, i) => `<option value="${i}" ${ci === i ? 'selected' : ''}>${h(c)}</option>`).join('')}</select>` : ''}
-    <label>此刻的心情</label>
+    <label>此刻的心情（可选）</label>
     <div class="chips" id="eMood" data-allow-none="1">${MOODS.map(m => `<span class="chip" data-v="${m}">${m}</span>`).join('')}</div>
     <div class="row" style="margin-top:12px"><input type="checkbox" id="eGive" style="width:auto"> <span>有点读不下去了</span></div>
     <input id="eGiveWhy" class="hidden" placeholder="为什么？（以后回看会很有意思）" style="margin-top:6px">
     <label>一句话（可选，会存为随笔）</label>
     <textarea id="eNote" style="min-height:56px"></textarea>
-    <div style="margin-top:16px"><button class="btn-main" id="eOk">${manual ? '记下并盖章' : '结束并盖章'}</button></div>`;
+    <details style="margin-top:10px"><summary class="muted small">不是今天读的？</summary>
+      <div class="grid2"><div><label>日期</label><input id="eDate" type="date" value="${dayKey(Date.now())}" max="${dayKey(Date.now())}"></div>
+      <div><label>大约几分钟（可不填）</label><input id="eMin" type="number" min="1" placeholder="不填"></div></div></details>
+    <div style="margin-top:16px"><button class="btn-main" id="eOk">记下并盖章</button></div>`;
 }
 
-function bindEndForm(root, w, base, manual) {
+function bindEndForm(root, w, base) {
   let edId = base.editionId;
   const edEl = $('#eEd', root);
   if (edEl) bindChips(edEl, v => {
@@ -758,7 +794,7 @@ function bindEndForm(root, w, base, manual) {
     inp.value = pctToValue(ed, workPct(w)) || '';
     inp.step = ed.kind === 'ebook' ? '0.1' : '1';
     inp.max = ed.kind === 'ebook' ? 100 : ed.total;
-    root.querySelector('.muted.small.center').textContent = '共 ' + totalLabel(ed);
+    $('#eTotal', root).textContent = '共 ' + totalLabel(ed);
     $('#eUnit', root).textContent = ed.kind === 'ebook' ? '读到百分之几？' : ed.kind === 'screen' ? '看到第几集？' : '读到第几页？';
   });
   bindChips($('#eMood', root));
@@ -767,29 +803,23 @@ function bindEndForm(root, w, base, manual) {
   $('#eOk', root).onclick = () => {
     const ed = editionOf(w, edId);
     const raw = $('#eVal', root).value;
-    if (raw === '') return toast('填一下当前进度');
-    let v = Number(raw);
+    if (raw === '') return toast('填一下读到哪里');
+    const v = Number(raw);
     const max = ed.kind === 'ebook' ? 100 : ed.total;
     if (v < 0 || v > max) return toast(`进度应在 0 到 ${max} 之间`);
     const chEl = $('#eCh', root);
     const ci = chEl && chEl.value !== '' ? Number(chEl.value) : (w.progress ? w.progress.chapterIdx : null);
-    let start = base.start, end = Date.now(), duration = base.duration;
-    if (manual) {
-      const mins = Math.max(1, Number($('#eMin', root).value) || 30);
-      const d = $('#eDate', root).value;
-      end = d && d !== dayKey(Date.now()) ? new Date(d + 'T21:00').getTime() : Date.now();
-      duration = mins * 60;
-      start = end - duration * 1000;
-    }
+    const d = $('#eDate', root).value;
+    const end = d && d !== dayKey(Date.now()) ? new Date(d + 'T21:00').getTime() : Date.now();
+    const duration = (Number($('#eMin', root).value) || 0) * 60;
     const fromValue = ed.id === base.editionId ? base.fromValue : pctToValue(ed, base.fromPct);
     const toPct = valueToPct(ed, v);
-    const session = {
-      id: uid(), workId: w.id, editionId: ed.id, start, end, duration,
+    S.sessions.push({
+      id: uid(), workId: w.id, editionId: ed.id, start: end - duration * 1000, end, duration,
       fromValue, toValue: v, fromPct: base.fromPct, toPct, chapterIdx: ci,
       mood: chipVal($('#eMood', root)), giveUp: $('#eGive', root).checked,
-      giveUpWhy: $('#eGiveWhy', root).value.trim(), manual: !!manual
-    };
-    S.sessions.push(session);
+      giveUpWhy: $('#eGiveWhy', root).value.trim()
+    });
     const isLatest = !w.progress || end >= (w.progress.updatedAt || 0);
     if (isLatest) w.progress = { pct: toPct, value: v, editionId: ed.id, chapterIdx: ci, updatedAt: end };
     if (w.status === 'want') w.status = 'reading';
@@ -798,9 +828,7 @@ function bindEndForm(root, w, base, manual) {
       const anc = anchorFor(w, ed.id, v, ci);
       S.cards.push({ id: uid(), workId: w.id, kind: 'note', title: '', body: note, createdAt: end, editionId: ed.id, value: v, pct: anc.pct, chapterIdx: ci, anchor: anc.label });
     }
-    if (!manual) S.active = null;
     save();
-    closeModal();
     const st = streakInfo();
     stampPop(`已盖章<br><span style="font-size:15px">连续 ${st.n} 天</span>`);
     setTimeout(() => {
@@ -810,22 +838,17 @@ function bindEndForm(root, w, base, manual) {
   };
 }
 
-function openEndForm(w, base) {
-  const m = openModal(`<h3>这次${workUnitVerb(w)}了 ${fmtDur(base.duration)}</h3>${endFormHTML(w, base.editionId, false)}`);
-  bindEndForm(m, w, base, false);
-}
-
-function viewManualLog(id) {
+function viewLog(id) {
   const w = getWork(id);
   if (!w) return go('/');
   const edId = (w.progress && w.progress.editionId) || w.editions[0].id;
   const ed = editionOf(w, edId);
   app.innerHTML = `<a href="#/work/${w.id}" class="muted" style="text-decoration:none">← ${h(w.title)}</a>
-    <h1 style="margin-top:6px">补记一次</h1>
-    <div class="muted">没开计时也没关系，把这次${workUnitVerb(w)}补上。</div>
-    <div id="form">${endFormHTML(w, edId, true)}</div>`;
+    <h1 style="margin-top:6px">记录进度</h1>
+    <div class="muted">${workUnitVerb(w)}完一段，记下到了哪里就好。</div>
+    <div id="form">${endFormHTML(w, edId)}</div>`;
   const fromValue = w.progress && w.progress.editionId === ed.id ? w.progress.value : pctToValue(ed, workPct(w));
-  bindEndForm($('#form'), w, { editionId: edId, fromValue, fromPct: workPct(w) }, true);
+  bindEndForm($('#form'), w, { editionId: edId, fromValue, fromPct: workPct(w) });
 }
 
 // ---------- 完成远征（心得） ----------
@@ -885,6 +908,7 @@ function memorialData(w) {
     readDays: new Set(ss.map(s => dayKey(s.end))).size,
     persons: workCards(w, 'person'), places: workCards(w, 'place'), terms: workCards(w, 'term'),
     events: workCards(w, 'event').sort((a, b) => (a.pct || 0) - (b.pct || 0)),
+    knowledge: workCards(w, 'knowledge').sort((a, b) => (a.pct || 0) - (b.pct || 0)),
     quotes: [...workCards(w, 'quote'), ...workCards(w, 'photo')].sort((a, b) => (a.pct || 0) - (b.pct || 0)),
     notes: workCards(w, 'note').sort((a, b) => a.createdAt - b.createdAt),
     guesses, right: guesses.filter(g => g.result === 'right').length, wrong: guesses.filter(g => g.result === 'wrong').length,
@@ -925,7 +949,7 @@ function viewMemorial(id) {
 
       ${d.persons.length ? `<section><h2>人物图鉴 · ${d.persons.length}</h2><div class="people">${d.persons.map(p => `<div class="card" style="margin:0">
         <b style="font-family:var(--serif)">${h(p.title)}</b>${r.favorite === p.title ? ' <span class="stamp" style="font-size:10px;height:20px">最爱</span>' : ''}
-        ${p.faction ? `<div class="muted small">${h(p.faction)}</div>` : ''}<div class="small">${h(p.body || '')}</div>
+        ${p.faction ? `<div class="muted small">${h(p.faction)}</div>` : ''}<div class="small">${h(p.body || '')}</div>${addendaList(p)}
         <div class="anchor">首次登场 ${h(p.anchor || '')}</div></div>`).join('')}</div></section>` : ''}
 
       ${d.places.length + d.terms.length ? `<section><h2>地点与名词</h2>${[...d.places, ...d.terms].map(c => `<div style="margin:6px 0"><span class="kind">${CARD_KINDS[c.kind]}</span><b>${h(c.title)}</b>
@@ -937,6 +961,10 @@ function viewMemorial(id) {
       ${d.guesses.length ? `<section><h2>预言回顾</h2><div class="muted small">猜对 ${d.right} · 猜错 ${d.wrong} · 共 ${d.guesses.length}</div>
         ${d.guesses.map(g => `<div style="margin:6px 0">${g.result ? `<span class="stamp" style="font-size:10px;height:22px">${{ right: '对', wrong: '错', partial: '半' }[g.result]}</span>` : '<span class="stamp off" style="font-size:10px;height:22px">?</span>'}
           ${h(g.title)} <span class="anchor">${h(g.anchor || '')}</span></div>`).join('')}</section>` : ''}
+
+      ${(w.info || []).length ? `<section><h2>作品资料</h2>${w.info.map(x => `<h3 style="margin-top:12px">${h(x.title)}</h3><div style="white-space:pre-wrap">${h(x.body)}</div>${x.photo ? `<img class="photo" src="${x.photo}" alt="">` : ''}${linksHTML(x.links)}`).join('')}</section>` : ''}
+
+      ${d.knowledge.length ? `<section><h2>知识清单 · ${d.knowledge.length}</h2>${d.knowledge.map(k => `<div style="margin:10px 0"><b>${h(k.title)}</b>${k.body ? `<div class="small">${h(k.body)}</div>` : ''}${k.url ? linkHTML(k.url) : ''}${addendaList(k)}<div class="anchor">${h(k.anchor || '')}</div></div>`).join('')}</section>` : ''}
 
       ${d.quotes.length ? `<section><h2>摘抄</h2>${d.quotes.map(q => q.kind === 'photo'
         ? `<div style="margin:10px 0">${q.photo ? `<img class="photo" src="${q.photo}" alt="书页">` : ''}<div class="small">${h(q.body || '')}</div><div class="anchor">${h(q.anchor || '')}</div></div>`
@@ -971,7 +999,9 @@ function memorialMarkdown(w) {
   if (r.rating) L.push(`- 评分：${'★'.repeat(r.rating)}`);
   if (r.oneLine) L.push('', `**一句话：** ${r.oneLine}`);
   if (d.events.length) { L.push('', '## 时间线', ''); d.events.forEach(c => L.push(`- ${c.when ? `**${c.when}** ` : ''}${c.title}${c.body ? '：' + c.body : ''}（${c.anchor || ''}）`)); }
-  if (d.persons.length) { L.push('', '## 人物', ''); d.persons.forEach(p => L.push(`- **${p.title}**${p.faction ? `（${p.faction}）` : ''}：${p.body || ''} — 首次登场 ${p.anchor || ''}`)); }
+  if (d.persons.length) { L.push('', '## 人物', ''); d.persons.forEach(p => { L.push(`- **${p.title}**${p.faction ? `（${p.faction}）` : ''}：${p.body || ''} — 首次登场 ${p.anchor || ''}`); (p.addenda || []).forEach(a => L.push(`  - ${a.anchor || ''}：${a.body}`)); }); }
+  if (d.knowledge.length) { L.push('', '## 知识清单', ''); d.knowledge.forEach(k => { L.push(`- **${k.title}**：${k.body || ''}${k.url ? ` (${k.url})` : ''}`); (k.addenda || []).forEach(a => L.push(`  - ${a.body}`)); }); }
+  (w.info || []).forEach(x => { L.push('', `## 资料：${x.title}`, '', x.body || ''); (x.links || []).forEach(l => L.push(`- [${l.title || l.url}](${l.url})`)); });
   if (d.places.length) { L.push('', '## 地点', ''); d.places.forEach(p => L.push(`- **${p.title}**：${p.body || ''}`)); }
   if (d.terms.length) { L.push('', '## 名词', ''); d.terms.forEach(p => L.push(`- **${p.title}**：${p.body || ''}`)); }
   if (d.guesses.length) {
@@ -1018,7 +1048,7 @@ function viewStats(yearStr) {
       <span class="chip ${statsUI.metric === 'hours' ? 'on' : ''}" data-v="hours">小时</span></div>
     <div class="card"><svg viewBox="0 0 340 120" width="100%">${bars}</svg></div>
     <h2>收录</h2>
-    <div class="card">人物 ${st.persons} · 地点 ${st.places} · 名词 ${st.terms} · 事件 ${st.events} · 摘抄 ${st.quotes} · 猜测 ${st.guesses}</div>
+    <div class="card">人物 ${st.persons} · 地点 ${st.places} · 名词 ${st.terms} · 知识 ${st.knowledge} · 事件 ${st.events} · 摘抄 ${st.quotes} · 猜测 ${st.guesses}</div>
     ${st.peakHour >= 0 ? `<div class="muted">最常在 ${st.peakHour}:00 – ${st.peakHour + 1}:00 开始${st.sessions ? '阅读' : ''}，${year} 年共 ${st.sessions} 次${st.episodes ? `，看了 ${st.episodes} 集` : ''}</div>` : ''}
     <h2>${year} 年完成的远征</h2>
     ${st.doneWorks.length ? st.doneWorks.sort((a, b) => a.finishedAt - b.finishedAt).map(doneCardHTML).join('') : `<div class="empty">今年的第一枚完成印章还在等你</div>`}

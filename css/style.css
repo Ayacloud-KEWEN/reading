@@ -192,3 +192,5 @@ svg text { font-family: var(--serif); }
   .memorial section { break-inside: avoid; }
   .map-wrap { max-height: none; overflow: visible; }
 }
+
+a.ext { color: var(--seal); text-decoration: none; border-bottom: 1px dashed var(--seal); }

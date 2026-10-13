@@ -1,4 +1,4 @@
-const CACHE = 'expedition-v1';
+const CACHE = 'expedition-v2';
 const SHELL = [
   './', 'index.html', 'css/style.css', 'js/store.js', 'js/maps.js', 'js/app.js',
   'manifest.webmanifest', 'icon.svg', 'icon-192.png', 'icon-512.png'
